@@ -3,11 +3,12 @@
 **Goal**: Create a minimal, custom MLIR-based compiler that demonstrates core middle-end optimization principles used by hardware accelerators, built from first principles.
 
 **Prerequisites**: C++ knowledge, basic understanding of neural network architectures
-**Timeline**: 8-12 weeks (depending on time commitment)
+**Timeline**: 9-13 weeks (depending on time commitment)
 
 ---
 
 ## Table of Contents
+0. [**Hello World: Your First MLIR Program**](#phase-0-hello-world)
 1. [Foundation: Understanding the "Why"](#phase-1-foundation)
 2. [Core Concepts: MLIR Building Blocks](#phase-2-core-concepts)
 3. [Your First Dialect: TensorFlow-like Operations](#phase-3-first-dialect)
@@ -16,6 +17,381 @@
 6. [Memory Hierarchy & Data Movement](#phase-6-memory-hierarchy)
 7. [Building the Complete Pipeline](#phase-7-complete-pipeline)
 8. [Testing & Validation](#phase-8-testing)
+
+---
+
+## Phase 0: Hello World - Your First MLIR Program (Day 1-2)
+
+### 0.1 Goal
+
+Build a minimal standalone MLIR program that constructs and prints a simple function that adds two integers. This will give you hands-on experience with the MLIR C++ API before diving into theory.
+
+**What You'll Build**:
+```mlir
+// This is what your program will generate
+func.func @add(%arg0: i32, %arg1: i32) -> i32 {
+  %result = arith.addi %arg0, %arg1 : i32
+  return %result : i32
+}
+```
+
+### 0.2 Build MLIR First
+
+Before starting, you need MLIR installed. Choose one approach:
+
+**Option A: Quick Install (Recommended for Hello World)**
+```bash
+# Install pre-built LLVM/MLIR (Ubuntu/Debian)
+sudo apt-get install llvm-17 llvm-17-dev mlir-17-tools libmlir-17-dev
+
+# Or use Homebrew (macOS)
+brew install llvm@17
+```
+
+**Option B: Build from Source (Better for Later Phases)**
+```bash
+git clone https://github.com/llvm/llvm-project.git
+cd llvm-project
+mkdir build && cd build
+
+cmake -G Ninja ../llvm \
+  -DLLVM_ENABLE_PROJECTS=mlir \
+  -DLLVM_TARGETS_TO_BUILD="X86;NVPTX" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_ENABLE_ASSERTIONS=ON \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++
+
+ninja check-mlir  # This takes 30-60 minutes
+```
+
+### 0.3 Project Structure
+
+Create your first MLIR project:
+
+```bash
+mkdir mlir-hello-world
+cd mlir-hello-world
+```
+
+Create this file structure:
+```
+mlir-hello-world/
+├── CMakeLists.txt
+├── main.cpp
+└── README.md
+```
+
+### 0.4 The Complete Hello World Program
+
+**File: `main.cpp`**
+
+```cpp
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Verifier.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "llvm/Support/raw_ostream.h"
+
+int main() {
+  // 1. Create an MLIR context (manages all IR objects)
+  mlir::MLIRContext context;
+
+  // 2. Register the dialects we'll use
+  context.loadDialect<mlir::func::FuncDialect>();
+  context.loadDialect<mlir::arith::ArithDialect>();
+
+  // 3. Create a builder (used to construct IR)
+  mlir::OpBuilder builder(&context);
+
+  // 4. Create a module (top-level container)
+  mlir::ModuleOp module = mlir::ModuleOp::create(builder.getUnknownLoc());
+
+  // 5. Set insertion point to the module body
+  builder.setInsertionPointToEnd(module.getBody());
+
+  // 6. Create the function type: (i32, i32) -> i32
+  auto i32Type = builder.getI32Type();
+  auto funcType = builder.getFunctionType(
+    {i32Type, i32Type},  // Input types
+    {i32Type}             // Output types
+  );
+
+  // 7. Create the function operation
+  auto funcOp = builder.create<mlir::func::FuncOp>(
+    builder.getUnknownLoc(),
+    "add",      // Function name
+    funcType
+  );
+
+  // 8. Create the function body (a block with two arguments)
+  mlir::Block *entryBlock = funcOp.addEntryBlock();
+  builder.setInsertionPointToStart(entryBlock);
+
+  // 9. Get the function arguments
+  mlir::Value arg0 = entryBlock->getArgument(0);
+  mlir::Value arg1 = entryBlock->getArgument(1);
+
+  // 10. Create the addition operation
+  mlir::Value result = builder.create<mlir::arith::AddIOp>(
+    builder.getUnknownLoc(),
+    arg0,
+    arg1
+  );
+
+  // 11. Create the return operation
+  builder.create<mlir::func::ReturnOp>(
+    builder.getUnknownLoc(),
+    result
+  );
+
+  // 12. Verify the module is well-formed
+  if (failed(mlir::verify(module))) {
+    llvm::errs() << "Module verification failed\n";
+    return 1;
+  }
+
+  // 13. Print the generated MLIR
+  module.print(llvm::outs());
+
+  return 0;
+}
+```
+
+### 0.5 Build Configuration
+
+**File: `CMakeLists.txt`**
+
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(mlir-hello-world)
+
+# Set C++ standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find MLIR
+find_package(MLIR REQUIRED CONFIG)
+list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+
+include(TableGen)
+include(AddLLVM)
+include(AddMLIR)
+
+# Include directories
+include_directories(${LLVM_INCLUDE_DIRS})
+include_directories(${MLIR_INCLUDE_DIRS})
+
+# Define the executable
+add_executable(mlir-hello-world main.cpp)
+
+# Link against MLIR libraries
+target_link_libraries(mlir-hello-world
+  PRIVATE
+    MLIRIR
+    MLIRFunc
+    MLIRFuncDialect
+    MLIRArithDialect
+    MLIRSupport
+    MLIRParser
+)
+```
+
+### 0.6 Building and Running
+
+```bash
+# Create build directory
+mkdir build
+cd build
+
+# Configure (adjust path if you built MLIR from source)
+cmake .. -G Ninja \
+  -DMLIR_DIR=/usr/lib/llvm-17/lib/cmake/mlir \
+  -DLLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm
+
+# Or if you built from source:
+# cmake .. -G Ninja \
+#   -DMLIR_DIR=/path/to/llvm-project/build/lib/cmake/mlir \
+#   -DLLVM_DIR=/path/to/llvm-project/build/lib/cmake/llvm
+
+# Build
+ninja
+
+# Run
+./mlir-hello-world
+```
+
+**Expected Output**:
+```mlir
+module {
+  func.func @add(%arg0: i32, %arg1: i32) -> i32 {
+    %0 = arith.addi %arg0, %arg1 : i32
+    return %0 : i32
+  }
+}
+```
+
+### 0.7 Understanding What You Built
+
+Let's break down the key concepts:
+
+**1. MLIRContext**: The universe for all MLIR objects
+- Manages memory for all IR objects
+- Registers dialects and types
+- Only one context per program typically
+
+**2. OpBuilder**: The factory for creating operations
+- Has an "insertion point" (where new ops go)
+- Provides convenience methods for common operations
+- Manages source locations
+
+**3. ModuleOp**: The top-level container
+- Every MLIR program has a module
+- Contains functions, global variables, etc.
+- Can be nested (modules within modules)
+
+**4. Operations**: The building blocks
+- `func.func`: Defines a function
+- `arith.addi`: Integer addition
+- `func.return`: Returns from a function
+
+**5. Values and SSA**:
+- Every operation produces a `Value` (except terminators)
+- Values are immutable (SSA = Static Single Assignment)
+- `%arg0`, `%arg1`, `%0` are SSA values
+
+### 0.8 Experiments to Try
+
+Modify your program to learn more:
+
+**Experiment 1: Add a multiplication**
+```cpp
+// After the addition, multiply by 2
+auto two = builder.create<mlir::arith::ConstantIntOp>(
+  builder.getUnknownLoc(), 2, i32Type
+);
+mlir::Value multiplied = builder.create<mlir::arith::MulIOp>(
+  builder.getUnknownLoc(), result, two
+);
+// Return multiplied instead of result
+```
+
+**Experiment 2: Create a function with a conditional**
+```cpp
+// Compare arg0 and arg1
+auto cmp = builder.create<mlir::arith::CmpIOp>(
+  builder.getUnknownLoc(),
+  mlir::arith::CmpIPredicate::sgt, // signed greater than
+  arg0, arg1
+);
+// Use scf.if to create conditional (requires SCF dialect)
+```
+
+**Experiment 3: Pretty printing**
+```cpp
+// Instead of module.print(llvm::outs());
+mlir::OpPrintingFlags flags;
+flags.enableDebugInfo();
+flags.printGenericOpForm(false);
+module.print(llvm::outs(), flags);
+```
+
+**Experiment 4: Parse MLIR instead of building**
+```cpp
+const char *mlirCode = R"(
+  func.func @add(%arg0: i32, %arg1: i32) -> i32 {
+    %0 = arith.addi %arg0, %arg1 : i32
+    return %0 : i32
+  }
+)";
+
+mlir::OwningOpRef<mlir::ModuleOp> module =
+  mlir::parseSourceString<mlir::ModuleOp>(mlirCode, &context);
+module->print(llvm::outs());
+```
+
+### 0.9 Common Errors and Solutions
+
+**Error: "MLIR_DIR not found"**
+```bash
+# Solution: Specify the path explicitly
+cmake .. -DMLIR_DIR=/usr/lib/llvm-17/lib/cmake/mlir
+```
+
+**Error: "undefined reference to mlir::..."**
+```cmake
+# Solution: Add missing libraries to CMakeLists.txt
+target_link_libraries(mlir-hello-world
+  PRIVATE
+    MLIRParser  # Add this if parsing
+    MLIRSCF     # Add this if using scf dialect
+)
+```
+
+**Error: "Failed to parse input"**
+```cpp
+// Solution: Check that you loaded the dialect
+context.loadDialect<mlir::arith::ArithDialect>();
+```
+
+**Error: Module verification failed**
+```cpp
+// Solution: Print the module even if invalid to see the problem
+module.print(llvm::errs());
+if (failed(mlir::verify(module))) {
+  llvm::errs() << "Module verification failed\n";
+}
+```
+
+### 0.10 Next Steps
+
+Once you have this working:
+
+1. ✅ You understand the MLIR C++ API basics
+2. ✅ You can create operations programmatically
+3. ✅ You know about contexts, builders, and modules
+4. ✅ You've seen SSA form in action
+
+**Now you're ready for Phase 1** where we'll understand *why* MLIR exists and what problems it solves!
+
+### 0.11 Reference: Key MLIR C++ API Patterns
+
+```cpp
+// Creating types
+auto i32 = builder.getI32Type();
+auto f32 = builder.getF32Type();
+auto i1 = builder.getI1Type();  // boolean
+auto tensor = mlir::RankedTensorType::get({4, 4}, f32);
+
+// Creating constants
+auto constInt = builder.create<mlir::arith::ConstantIntOp>(loc, 42, i32);
+auto constFloat = builder.create<mlir::arith::ConstantFloatOp>(
+  loc, llvm::APFloat(3.14f), f32
+);
+
+// Creating operations
+auto add = builder.create<mlir::arith::AddIOp>(loc, lhs, rhs);
+auto mul = builder.create<mlir::arith::MulFOp>(loc, lhs, rhs);
+
+// Working with blocks
+mlir::Block *block = builder.createBlock(&region);
+builder.setInsertionPointToStart(block);
+
+// Getting operation results
+mlir::Value result = someOp.getResult();
+mlir::Value firstResult = someOp.getResult(0);  // If multiple results
+
+// Iterating over operations
+for (auto &op : block->getOperations()) {
+  op.print(llvm::outs());
+}
+```
+
+**Deliverable**: A working `mlir-hello-world` program that generates and prints a simple MLIR function.
 
 ---
 
