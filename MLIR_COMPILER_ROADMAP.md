@@ -1,744 +1,425 @@
-# MLIR Compiler Roadmap: Building a Minimal Hardware Accelerator Compiler
+# MLIR Compiler Roadmap: 4-Week Intensive
 
-**Goal**: Create a minimal, custom MLIR-based compiler that demonstrates core middle-end optimization principles used by hardware accelerators, built from first principles.
+**Goal**: Build a minimal MLIR compiler that optimizes a 2-layer neural network for CPU hardware accelerators.
 
-**Prerequisites**: C++ knowledge, basic understanding of neural network architectures
-**Timeline**: 9-13 weeks (depending on time commitment)
+**Prerequisites**: C++ knowledge, basic understanding of neural networks
+**Timeline**: 4 weeks (intensive, ~20 hours/week = 80 hours total)
+**Scope**: Matrix multiplication optimization with loop tiling
+
+---
+
+## What You'll Build
+
+A complete compiler pipeline that:
+1. Takes a 2-layer MLP (Multi-Layer Perceptron) as input
+2. Fuses operations (dense + relu)
+3. Tiles matrix multiplications for cache efficiency
+4. Generates optimized executable code
+
+**Example Input**:
+```mlir
+func.func @mlp(%input: tensor<1x784xf32>, ...) -> tensor<1x10xf32> {
+  %h1 = nn.dense %input, %w1, %b1 : ...
+  %h1_act = nn.relu %h1 : ...
+  %output = nn.dense %h1_act, %w2, %b2 : ...
+  return %output
+}
+```
+
+**Example Output**: Optimized executable with 2-5x speedup from tiling.
 
 ---
 
 ## Table of Contents
-0. [**Hello World: Your First MLIR Program**](#phase-0-hello-world)
-1. [Foundation: Understanding the "Why"](#phase-1-foundation)
-2. [Core Concepts: MLIR Building Blocks](#phase-2-core-concepts)
-3. [Your First Dialect: TensorFlow-like Operations](#phase-3-first-dialect)
-4. [Pattern Matching & Rewriting](#phase-4-pattern-matching)
-5. [Hardware-Oriented Optimizations](#phase-5-hardware-optimizations)
-6. [Memory Hierarchy & Data Movement](#phase-6-memory-hierarchy)
-7. [Building the Complete Pipeline](#phase-7-complete-pipeline)
-8. [Testing & Validation](#phase-8-testing)
+
+### Week 1: Foundation & Dialect (Days 1-7)
+0. [Hello World: Your First MLIR Program](#week-1-day-1-2-hello-world) - Days 1-2
+1. [Core MLIR Concepts](#week-1-day-3-4-core-concepts) - Days 3-4
+2. [Minimal Neural Network Dialect](#week-1-day-5-7-minimal-dialect) - Days 5-7
+
+### Week 2: Optimization (Days 8-14)
+3. [Pattern Rewriting & Fusion](#week-2-day-8-10-pattern-rewriting) - Days 8-10
+4. [Loop Tiling for Hardware](#week-2-day-11-14-loop-tiling) - Days 11-14
+
+### Week 3: Lowering & Pipeline (Days 15-21)
+5. [Tensor to Memory Lowering](#week-3-day-15-17-lowering) - Days 15-17
+6. [End-to-End Compilation](#week-3-day-18-21-pipeline) - Days 18-21
+
+### Week 4: Integration (Days 22-28)
+7. [Testing & Validation](#week-4-day-22-24-testing) - Days 22-24
+8. [Final Project](#week-4-day-25-28-final) - Days 25-28
 
 ---
 
-## Phase 0: Hello World - Your First MLIR Program (Day 1-2)
-
-### 0.1 Goal
-
-Build a minimal standalone MLIR program that constructs and prints a simple function that adds two integers. This will give you hands-on experience with the MLIR C++ API before diving into theory.
-
-**What You'll Build**:
-```mlir
-// This is what your program will generate
-func.func @add(%arg0: i32, %arg1: i32) -> i32 {
-  %result = arith.addi %arg0, %arg1 : i32
-  return %result : i32
-}
-```
-
-### 0.2 Build MLIR First
-
-Before starting, you need MLIR installed. Choose one approach:
-
-**Option A: Quick Install (Recommended for Hello World)**
-```bash
-# Install pre-built LLVM/MLIR (Ubuntu/Debian)
-sudo apt-get install llvm-17 llvm-17-dev mlir-17-tools libmlir-17-dev
-
-# Or use Homebrew (macOS)
-brew install llvm@17
-```
-
-**Option B: Build from Source (Better for Later Phases)**
-```bash
-git clone https://github.com/llvm/llvm-project.git
-cd llvm-project
-mkdir build && cd build
-
-cmake -G Ninja ../llvm \
-  -DLLVM_ENABLE_PROJECTS=mlir \
-  -DLLVM_TARGETS_TO_BUILD="X86;NVPTX" \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DLLVM_ENABLE_ASSERTIONS=ON \
-  -DCMAKE_C_COMPILER=clang \
-  -DCMAKE_CXX_COMPILER=clang++
-
-ninja check-mlir  # This takes 30-60 minutes
-```
-
-### 0.3 Project Structure
-
-Create your first MLIR project:
-
-```bash
-mkdir mlir-hello-world
-cd mlir-hello-world
-```
-
-Create this file structure:
-```
-mlir-hello-world/
-├── CMakeLists.txt
-├── main.cpp
-└── README.md
-```
-
-### 0.4 The Complete Hello World Program
-
-**File: `main.cpp`**
-
-```cpp
-#include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Verifier.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "llvm/Support/raw_ostream.h"
-
-int main() {
-  // 1. Create an MLIR context (manages all IR objects)
-  mlir::MLIRContext context;
-
-  // 2. Register the dialects we'll use
-  context.loadDialect<mlir::func::FuncDialect>();
-  context.loadDialect<mlir::arith::ArithDialect>();
-
-  // 3. Create a builder (used to construct IR)
-  mlir::OpBuilder builder(&context);
-
-  // 4. Create a module (top-level container)
-  mlir::ModuleOp module = mlir::ModuleOp::create(builder.getUnknownLoc());
-
-  // 5. Set insertion point to the module body
-  builder.setInsertionPointToEnd(module.getBody());
-
-  // 6. Create the function type: (i32, i32) -> i32
-  auto i32Type = builder.getI32Type();
-  auto funcType = builder.getFunctionType(
-    {i32Type, i32Type},  // Input types
-    {i32Type}             // Output types
-  );
-
-  // 7. Create the function operation
-  auto funcOp = builder.create<mlir::func::FuncOp>(
-    builder.getUnknownLoc(),
-    "add",      // Function name
-    funcType
-  );
-
-  // 8. Create the function body (a block with two arguments)
-  mlir::Block *entryBlock = funcOp.addEntryBlock();
-  builder.setInsertionPointToStart(entryBlock);
-
-  // 9. Get the function arguments
-  mlir::Value arg0 = entryBlock->getArgument(0);
-  mlir::Value arg1 = entryBlock->getArgument(1);
-
-  // 10. Create the addition operation
-  mlir::Value result = builder.create<mlir::arith::AddIOp>(
-    builder.getUnknownLoc(),
-    arg0,
-    arg1
-  );
-
-  // 11. Create the return operation
-  builder.create<mlir::func::ReturnOp>(
-    builder.getUnknownLoc(),
-    result
-  );
-
-  // 12. Verify the module is well-formed
-  if (failed(mlir::verify(module))) {
-    llvm::errs() << "Module verification failed\n";
-    return 1;
-  }
-
-  // 13. Print the generated MLIR
-  module.print(llvm::outs());
-
-  return 0;
-}
-```
-
-### 0.5 Build Configuration
-
-**File: `CMakeLists.txt`**
-
-```cmake
-cmake_minimum_required(VERSION 3.20)
-project(mlir-hello-world)
-
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Find MLIR
-find_package(MLIR REQUIRED CONFIG)
-list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
-list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-
-include(TableGen)
-include(AddLLVM)
-include(AddMLIR)
-
-# Include directories
-include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${MLIR_INCLUDE_DIRS})
-
-# Define the executable
-add_executable(mlir-hello-world main.cpp)
-
-# Link against MLIR libraries
-target_link_libraries(mlir-hello-world
-  PRIVATE
-    MLIRIR
-    MLIRFunc
-    MLIRFuncDialect
-    MLIRArithDialect
-    MLIRSupport
-    MLIRParser
-)
-```
-
-### 0.6 Building and Running
-
-```bash
-# Create build directory
-mkdir build
-cd build
-
-# Configure (adjust path if you built MLIR from source)
-cmake .. -G Ninja \
-  -DMLIR_DIR=/usr/lib/llvm-17/lib/cmake/mlir \
-  -DLLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm
-
-# Or if you built from source:
-# cmake .. -G Ninja \
-#   -DMLIR_DIR=/path/to/llvm-project/build/lib/cmake/mlir \
-#   -DLLVM_DIR=/path/to/llvm-project/build/lib/cmake/llvm
-
-# Build
-ninja
-
-# Run
-./mlir-hello-world
-```
-
-**Expected Output**:
-```mlir
-module {
-  func.func @add(%arg0: i32, %arg1: i32) -> i32 {
-    %0 = arith.addi %arg0, %arg1 : i32
-    return %0 : i32
-  }
-}
-```
-
-### 0.7 Understanding What You Built
-
-Let's break down the key concepts:
-
-**1. MLIRContext**: The universe for all MLIR objects
-- Manages memory for all IR objects
-- Registers dialects and types
-- Only one context per program typically
-
-**2. OpBuilder**: The factory for creating operations
-- Has an "insertion point" (where new ops go)
-- Provides convenience methods for common operations
-- Manages source locations
-
-**3. ModuleOp**: The top-level container
-- Every MLIR program has a module
-- Contains functions, global variables, etc.
-- Can be nested (modules within modules)
-
-**4. Operations**: The building blocks
-- `func.func`: Defines a function
-- `arith.addi`: Integer addition
-- `func.return`: Returns from a function
-
-**5. Values and SSA**:
-- Every operation produces a `Value` (except terminators)
-- Values are immutable (SSA = Static Single Assignment)
-- `%arg0`, `%arg1`, `%0` are SSA values
-
-### 0.8 Experiments to Try
-
-Modify your program to learn more:
-
-**Experiment 1: Add a multiplication**
-```cpp
-// After the addition, multiply by 2
-auto two = builder.create<mlir::arith::ConstantIntOp>(
-  builder.getUnknownLoc(), 2, i32Type
-);
-mlir::Value multiplied = builder.create<mlir::arith::MulIOp>(
-  builder.getUnknownLoc(), result, two
-);
-// Return multiplied instead of result
-```
-
-**Experiment 2: Create a function with a conditional**
-```cpp
-// Compare arg0 and arg1
-auto cmp = builder.create<mlir::arith::CmpIOp>(
-  builder.getUnknownLoc(),
-  mlir::arith::CmpIPredicate::sgt, // signed greater than
-  arg0, arg1
-);
-// Use scf.if to create conditional (requires SCF dialect)
-```
-
-**Experiment 3: Pretty printing**
-```cpp
-// Instead of module.print(llvm::outs());
-mlir::OpPrintingFlags flags;
-flags.enableDebugInfo();
-flags.printGenericOpForm(false);
-module.print(llvm::outs(), flags);
-```
-
-**Experiment 4: Parse MLIR instead of building**
-```cpp
-const char *mlirCode = R"(
-  func.func @add(%arg0: i32, %arg1: i32) -> i32 {
-    %0 = arith.addi %arg0, %arg1 : i32
-    return %0 : i32
-  }
-)";
-
-mlir::OwningOpRef<mlir::ModuleOp> module =
-  mlir::parseSourceString<mlir::ModuleOp>(mlirCode, &context);
-module->print(llvm::outs());
-```
-
-### 0.9 Common Errors and Solutions
-
-**Error: "MLIR_DIR not found"**
-```bash
-# Solution: Specify the path explicitly
-cmake .. -DMLIR_DIR=/usr/lib/llvm-17/lib/cmake/mlir
-```
-
-**Error: "undefined reference to mlir::..."**
-```cmake
-# Solution: Add missing libraries to CMakeLists.txt
-target_link_libraries(mlir-hello-world
-  PRIVATE
-    MLIRParser  # Add this if parsing
-    MLIRSCF     # Add this if using scf dialect
-)
-```
-
-**Error: "Failed to parse input"**
-```cpp
-// Solution: Check that you loaded the dialect
-context.loadDialect<mlir::arith::ArithDialect>();
-```
-
-**Error: Module verification failed**
-```cpp
-// Solution: Print the module even if invalid to see the problem
-module.print(llvm::errs());
-if (failed(mlir::verify(module))) {
-  llvm::errs() << "Module verification failed\n";
-}
-```
-
-### 0.10 Next Steps
-
-Once you have this working:
-
-1. ✅ You understand the MLIR C++ API basics
-2. ✅ You can create operations programmatically
-3. ✅ You know about contexts, builders, and modules
-4. ✅ You've seen SSA form in action
-
-**Now you're ready for Phase 1** where we'll understand *why* MLIR exists and what problems it solves!
-
-### 0.11 Reference: Key MLIR C++ API Patterns
-
-```cpp
-// Creating types
-auto i32 = builder.getI32Type();
-auto f32 = builder.getF32Type();
-auto i1 = builder.getI1Type();  // boolean
-auto tensor = mlir::RankedTensorType::get({4, 4}, f32);
-
-// Creating constants
-auto constInt = builder.create<mlir::arith::ConstantIntOp>(loc, 42, i32);
-auto constFloat = builder.create<mlir::arith::ConstantFloatOp>(
-  loc, llvm::APFloat(3.14f), f32
-);
-
-// Creating operations
-auto add = builder.create<mlir::arith::AddIOp>(loc, lhs, rhs);
-auto mul = builder.create<mlir::arith::MulFOp>(loc, lhs, rhs);
-
-// Working with blocks
-mlir::Block *block = builder.createBlock(&region);
-builder.setInsertionPointToStart(block);
-
-// Getting operation results
-mlir::Value result = someOp.getResult();
-mlir::Value firstResult = someOp.getResult(0);  // If multiple results
-
-// Iterating over operations
-for (auto &op : block->getOperations()) {
-  op.print(llvm::outs());
-}
-```
-
-**Deliverable**: A working `mlir-hello-world` program that generates and prints a simple MLIR function.
+## Week 1, Day 1-2: Hello World
+
+### Goal
+Build and run your first MLIR program that generates a simple add function.
+
+### What to Do
+
+See the complete project in `mlir-hello-world/` directory with:
+- `main.cpp` - Complete working program
+- `CMakeLists.txt` - Build configuration
+- `README.md` - Instructions and experiments
+
+**Time Investment**: 4-6 hours
+- 1-2 hours: Build MLIR (if needed)
+- 1 hour: Build and run hello world
+- 2-3 hours: Experiments and understanding
+
+### Key Concepts
+- MLIRContext: Manages all IR objects
+- OpBuilder: Creates operations
+- Operations: func.func, arith.addi, func.return
+- SSA form: Immutable values
+
+### Deliverable
+✅ Working program that prints MLIR IR for an add function
 
 ---
 
-## Phase 1: Foundation - Understanding the "Why" (Week 1)
+## Week 1, Day 3-4: Core MLIR Concepts
 
-### 1.1 Why Compilers Matter for Hardware Accelerators
+### Goal
+Understand the 5 core concepts needed to build a dialect.
 
-**First Principles**: Modern neural networks are just mathematical computations. Hardware accelerators (GPUs, TPUs, custom ASICs) can execute these operations 100-1000x faster than CPUs, but only if the operations are expressed in a way that matches the hardware's capabilities.
-
-**The Problem**:
-- PyTorch/TensorFlow express computations in high-level operations (`matmul`, `conv2d`, `relu`)
-- Hardware needs low-level instructions (specific memory layouts, tiled operations, parallel execution)
-- The **middle-end compiler** bridges this gap through optimization
-
-**Why MLIR?**
-- Traditional compilers (LLVM) work at too low a level for ML operations
-- MLIR lets you work at multiple abstraction levels simultaneously
-- You can represent a matrix multiply as both a high-level operation AND its low-level implementation
-
-### 1.2 The Three-Stage Compiler Mental Model
-
-```
-HIGH LEVEL (Python/Framework)
-    ↓ Frontend
-MIDDLE LEVEL (MLIR - THIS IS OUR FOCUS)
-    ↓ Backend
-LOW LEVEL (Assembly/Hardware Instructions)
-```
-
-**Our Focus**: The middle stage where we:
-1. Represent operations abstractly
-2. Optimize data flow and computation patterns
-3. Transform for specific hardware characteristics
-
-### 1.3 Practical Exercise: Set Up MLIR
-
-**Objective**: Get MLIR building and understand the codebase structure
-
-```bash
-# Clone LLVM (includes MLIR)
-git clone https://github.com/llvm/llvm-project.git
-cd llvm-project
-
-# Create build directory
-mkdir build && cd build
-
-# Configure (minimal build for MLIR only)
-cmake -G Ninja ../llvm \
-  -DLLVM_ENABLE_PROJECTS=mlir \
-  -DLLVM_TARGETS_TO_BUILD="X86" \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DLLVM_ENABLE_ASSERTIONS=ON
-
-# Build (this takes 30-60 minutes)
-ninja check-mlir
-```
-
-**Key Directories to Explore**:
-- `mlir/include/mlir/IR/` - Core IR definitions
-- `mlir/include/mlir/Dialect/` - Built-in dialects (Arith, Tensor, Linalg)
-- `mlir/lib/Transforms/` - Optimization passes
-- `mlir/examples/toy/` - The canonical tutorial
-
-**Deliverable**: Successfully build MLIR and run `mlir-opt --help`
-
----
-
-## Phase 2: Core Concepts - MLIR Building Blocks (Week 2-3)
-
-### 2.1 Understanding Operations (The Atom of MLIR)
-
-**First Principles**: Everything in a compiler is an operation. An operation is a node in a computational graph.
+### 1. Operations - The Building Blocks
 
 ```mlir
-// Example: A simple addition
 %result = arith.addi %a, %b : i32
-
-// Anatomy:
-// %result      - SSA (Static Single Assignment) value name
-// arith.addi   - Operation name (dialect.operation)
-// %a, %b       - Operands (inputs)
-// : i32        - Type annotation
+//        ^operation  ^operands ^type
 ```
 
-**Key Insight**: Operations are defined in **dialects** (namespaces for related operations)
+Every operation has:
+- **Name**: `dialect.operation` (e.g., `arith.addi`)
+- **Operands**: Inputs (SSA values)
+- **Results**: Outputs (SSA values)
+- **Attributes**: Compile-time constants
+- **Regions**: Nested operations (for control flow)
 
-### 2.2 Understanding Dialects (The Language You Invent)
-
-**First Principles**: A dialect is a collection of operations that represent computations at a specific abstraction level.
-
-**Examples**:
-- `arith` dialect: Integer/float arithmetic (`addi`, `mulf`, etc.)
-- `tensor` dialect: High-level tensor operations
-- `linalg` dialect: Linear algebra operations (matmul, conv)
-- **Your custom dialect**: Hardware-specific operations
-
-**Why Multiple Dialects?**
-Different hardware and optimization stages need different abstractions. You'll progressively lower from high-level to low-level dialects.
-
-### 2.3 Understanding Types
-
-MLIR is **strongly typed**. Types describe the shape and nature of data:
+### 2. Types - What Data Looks Like
 
 ```mlir
-// Scalar types
-%x : i32           // 32-bit integer
-%y : f32           // 32-bit float
-
-// Tensor types (most important for ML)
-%tensor : tensor<4x256x256xf32>  // 4 x 256 x 256 float tensor
-
-// Memory types (for hardware)
-%mem : memref<1024xf32>          // Memory reference (like a pointer)
+%x : i32                          // 32-bit integer
+%y : f32                          // 32-bit float
+%tensor : tensor<128x256xf32>     // 2D tensor
+%mem : memref<1024xf32>           // Memory buffer
 ```
 
 **Key Distinction**:
-- `tensor` = immutable, mathematical abstraction
-- `memref` = mutable, physical memory representation
+- `tensor` = immutable, value semantics (high-level)
+- `memref` = mutable, pointer semantics (low-level hardware)
 
-### 2.4 Understanding Regions and Blocks
+### 3. Dialects - Namespaces for Operations
 
-**First Principles**: Some operations contain other operations. This creates hierarchy.
+Built-in dialects you'll use:
+- `arith` - Arithmetic (addi, mulf, etc.)
+- `func` - Functions
+- `tensor` - Tensor operations
+- `linalg` - Linear algebra (matmul)
+- `scf` - Control flow (for, if)
+- `memref` - Memory operations
+
+### 4. Regions and Blocks
 
 ```mlir
-// A function is an operation with a region
-func.func @my_function(%arg0: f32) -> f32 {
-  // This is a block (contains a sequence of operations)
-  %result = arith.mulf %arg0, %arg0 : f32
-  return %result : f32
+func.func @example() {          // Region starts
+  // This is a block
+  %x = arith.constant 42 : i32
+  return
+}                                // Region ends
+```
+
+### 5. TableGen - Code Generation
+
+Instead of writing boilerplate C++, use TableGen:
+
+```tablegen
+def AddOp : Op<"add"> {
+  let arguments = (ins I32:$lhs, I32:$rhs);
+  let results = (outs I32:$result);
 }
 ```
 
-**Hardware Relevance**: Loops and conditionals use regions to represent structured control flow.
+Generates C++ code for you automatically.
 
-### 2.5 Practical Exercise: Read and Understand MLIR IR
+### Practical Exercise (2-3 hours)
 
-**Objective**: Build intuition by reading MLIR code
+**Read existing MLIR code:**
 
-Create a file `example.mlir`:
-```mlir
-func.func @matrix_multiply(%A: tensor<128x256xf32>,
-                           %B: tensor<256x512xf32>) -> tensor<128x512xf32> {
-  %C_empty = tensor.empty() : tensor<128x512xf32>
-  %cst = arith.constant 0.0 : f32
-  %C_init = linalg.fill ins(%cst : f32) outs(%C_empty : tensor<128x512xf32>) -> tensor<128x512xf32>
-
+```bash
+# Create a sample
+cat > matmul.mlir << 'EOF'
+func.func @matmul(%A: tensor<128x256xf32>, %B: tensor<256x512xf32>) -> tensor<128x512xf32> {
+  %C_init = tensor.empty() : tensor<128x512xf32>
   %C = linalg.matmul ins(%A, %B : tensor<128x256xf32>, tensor<256x512xf32>)
                      outs(%C_init : tensor<128x512xf32>) -> tensor<128x512xf32>
   return %C : tensor<128x512xf32>
 }
+EOF
+
+# Validate it
+mlir-opt matmul.mlir
+
+# Try a transformation
+mlir-opt matmul.mlir --linalg-tile="tile-sizes=64,64,64"
 ```
 
-Run: `mlir-opt example.mlir`
+**Understand what each line does**:
+1. What operations are used?
+2. What are their operands?
+3. What types do they have?
+4. Trace the data flow
 
-**Exercise**:
-1. Identify each operation
-2. Trace the data flow (%C_empty → %C_init → %C)
-3. Understand why initialization is needed
-
-**Deliverable**: Explain in your own words what each line does
+### Deliverable
+✅ Can read and explain MLIR code
+✅ Understand operations, types, and dialects
 
 ---
 
-## Phase 3: Your First Dialect - TensorFlow-like Operations (Week 3-4)
+## Week 1, Day 5-7: Minimal Neural Network Dialect
 
-### 3.1 Design Your Dialect (Paper Design First!)
+### Goal
+Create a minimal "nn" dialect with 3 operations: dense, relu, add.
 
-**First Principles**: Before writing code, decide what abstraction level you need.
+### Project Structure
 
-**Our Target**: A minimal dialect for neural network layers
-
-```mlir
-// What operations do we need?
-%y = nn.dense %x, %weights, %bias : tensor<NxD>, tensor<DxM>, tensor<M> -> tensor<NxM>
-%y = nn.relu %x : tensor<NxM> -> tensor<NxM>
-%y = nn.conv2d %input, %kernel : tensor<NxHxWxC>, tensor<KxKxCxF> -> tensor<NxH'xW'xF>
-%y = nn.softmax %x : tensor<NxC> -> tensor<NxC>
 ```
-
-**Design Questions**:
-1. What are the minimum operations for a simple neural network?
-2. What information does each operation need? (dimensions, types, attributes)
-3. How will these eventually map to hardware?
-
-### 3.2 Implement the Dialect in C++
-
-**File Structure**:
-```
-my-mlir-project/
+nn-dialect/
 ├── include/
-│   └── NNDialect/
-│       ├── NNDialect.h      // Dialect definition
-│       ├── NNOps.h          // Operation definitions
-│       └── NNOps.td         // TableGen operation specs
+│   └── NN/
+│       ├── NNDialect.h
+│       ├── NNOps.h
+│       └── NNOps.td          ← Define operations here
 ├── lib/
-│   └── NNDialect/
+│   └── NN/
 │       ├── NNDialect.cpp
 │       └── NNOps.cpp
+├── tools/
+│   └── nn-opt.cpp            ← Your compiler tool
 └── CMakeLists.txt
 ```
 
-**Step 3.2.1: Define Dialect** (`NNDialect.td`)
+### Step 1: Define the Dialect (1 hour)
+
+**File: `include/NN/NNOps.td`**
 
 ```tablegen
-// TableGen is MLIR's code generation tool
+include "mlir/IR/OpBase.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
 def NN_Dialect : Dialect {
   let name = "nn";
-  let summary = "Neural Network operations dialect";
-  let description = [{
-    This dialect contains high-level neural network operations
-    suitable for hardware accelerator optimization.
-  }];
   let cppNamespace = "::mlir::nn";
+  let summary = "Neural network operations dialect";
 }
-```
 
-**Step 3.2.2: Define Operations** (`NNOps.td`)
-
-```tablegen
 class NN_Op<string mnemonic, list<Trait> traits = []> :
     Op<NN_Dialect, mnemonic, traits>;
+```
 
+### Step 2: Define Operations (3-4 hours)
+
+**Add to `NNOps.td`:**
+
+```tablegen
+// Dense layer: output = input @ weights + bias
 def DenseOp : NN_Op<"dense", [Pure]> {
-  let summary = "Fully connected (dense) layer";
-  let description = [{
-    Performs matrix multiplication followed by bias addition:
-    output = input @ weights + bias
-  }];
-
+  let summary = "Fully connected layer";
   let arguments = (ins
     AnyTensor:$input,
     AnyTensor:$weights,
     AnyTensor:$bias
   );
-
   let results = (outs AnyTensor:$output);
-
   let assemblyFormat = [{
-    $input `,` $weights `,` $bias attr-dict `:` type($input) `,` type($weights) `,` type($bias) `->` type($output)
+    $input `,` $weights `,` $bias attr-dict `:`
+    type($input) `,` type($weights) `,` type($bias) `->` type($output)
   }];
 }
 
+// ReLU activation: output = max(0, input)
 def ReluOp : NN_Op<"relu", [Pure, SameOperandsAndResultType]> {
-  let summary = "Rectified Linear Unit activation";
+  let summary = "ReLU activation function";
   let arguments = (ins AnyTensor:$input);
   let results = (outs AnyTensor:$output);
   let assemblyFormat = "$input attr-dict `:` type($input)";
 }
+
+// Element-wise add
+def AddOp : NN_Op<"add", [Pure, SameOperandsAndResultType]> {
+  let summary = "Element-wise addition";
+  let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs);
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+}
 ```
 
-**Step 3.2.3: Build System** (`CMakeLists.txt`)
+### Step 3: Build System (1 hour)
+
+**File: `CMakeLists.txt`**
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
-project(my-nn-compiler)
+project(nn-dialect)
 
 find_package(MLIR REQUIRED CONFIG)
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 include(AddMLIR)
+include(TableGen)
 
-# TableGen our operations
-set(LLVM_TARGET_DEFINITIONS NNOps.td)
+# Generate code from TableGen
+set(LLVM_TARGET_DEFINITIONS include/NN/NNOps.td)
 mlir_tablegen(NNOps.h.inc -gen-op-decls)
 mlir_tablegen(NNOps.cpp.inc -gen-op-defs)
 mlir_tablegen(NNDialect.h.inc -gen-dialect-decls)
 mlir_tablegen(NNDialect.cpp.inc -gen-dialect-defs)
 add_public_tablegen_target(NNOpsIncGen)
 
-# Compile the dialect
+# Build the dialect library
 add_mlir_library(NNDialect
-  NNDialect.cpp
-  NNOps.cpp
+  lib/NN/NNDialect.cpp
+  lib/NN/NNOps.cpp
   DEPENDS NNOpsIncGen
+)
+
+# Build the compiler tool
+add_llvm_executable(nn-opt tools/nn-opt.cpp)
+target_link_libraries(nn-opt PRIVATE
+  NNDialect
+  MLIRIR
+  MLIRParser
+  MLIRSupport
 )
 ```
 
-### 3.3 Practical Exercise: Write Your First Operation
+### Step 4: Create Compiler Tool (1 hour)
 
-**Objective**: Implement a complete operation from scratch
+**File: `tools/nn-opt.cpp`**
 
-1. Add a `nn.batch_norm` operation to your dialect
-2. Define its semantics (mean subtraction, variance division, scale and shift)
-3. Specify inputs (input tensor, scale, shift, mean, variance)
-4. Generate code using TableGen
-5. Write a test MLIR file that uses it
+```cpp
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/InitAllDialects.h"
+#include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "NN/NNDialect.h"
 
-**Deliverable**: A working `nn.batch_norm` operation that parses and verifies
+int main(int argc, char **argv) {
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::nn::NNDialect>();
+  mlir::registerAllDialects(registry);
+
+  return mlir::asMainReturnCode(
+    mlir::MlirOptMain(argc, argv, "NN Dialect Optimizer\n", registry));
+}
+```
+
+### Step 5: Test It (1 hour)
+
+```bash
+# Build
+mkdir build && cd build
+cmake .. -G Ninja -DMLIR_DIR=/path/to/mlir
+ninja
+
+# Create test file
+cat > test.mlir << 'EOF'
+func.func @test(%input: tensor<10xf32>,
+                %w: tensor<10x5xf32>,
+                %b: tensor<5xf32>) -> tensor<5xf32> {
+  %dense = nn.dense %input, %w, %b :
+    tensor<10xf32>, tensor<10x5xf32>, tensor<5xf32> -> tensor<5xf32>
+  %relu = nn.relu %dense : tensor<5xf32>
+  return %relu : tensor<5xf32>
+}
+EOF
+
+# Test parsing
+./nn-opt test.mlir
+```
+
+### Deliverable
+✅ Working nn-opt tool that can parse your dialect
+✅ Can define operations in TableGen
+✅ Understand the dialect compilation workflow
+
+**Files to Complete**:
+- `include/NN/NNOps.td` - Operation definitions
+- `lib/NN/NNDialect.cpp` - Dialect implementation
+- `lib/NN/NNOps.cpp` - Operation implementation
+- `tools/nn-opt.cpp` - Compiler tool
+- `CMakeLists.txt` - Build configuration
 
 ---
 
-## Phase 4: Pattern Matching & Rewriting (Week 5-6)
+## Week 2, Day 8-10: Pattern Rewriting & Fusion
 
-### 4.1 Why Pattern Rewriting?
+### Goal
+Implement operation fusion to reduce memory traffic: `dense + relu → fused_dense_relu`
 
-**First Principles**: Optimization is pattern matching + rewriting.
+### Why Fusion Matters
 
-**Example Pattern**:
 ```mlir
-// Before: Inefficient
-%1 = nn.dense %x, %W1, %b1
-%2 = nn.relu %1
-%3 = nn.dense %2, %W2, %b2
+// Before: 2 memory roundtrips
+%dense = nn.dense %input, %w, %b    // Write dense result to memory
+%relu = nn.relu %dense               // Read from memory, write relu result
 
-// After: Fused (better for hardware)
-%3 = nn.fused_dense_relu_dense %x, %W1, %b1, %W2, %b2
+// After: 1 memory roundtrip
+%fused = nn.fused_dense_relu %input, %w, %b  // Compute both, write once
 ```
 
-**Why This Matters for Hardware**:
-- Fewer memory roundtrips
-- Better cache utilization
-- Opportunity for specialized hardware units
+**Hardware Benefit**: 2x reduction in memory bandwidth usage.
 
-### 4.2 Declarative Pattern Rewriting (DRR)
+### Step 1: Add Fused Operation (1 hour)
 
-MLIR provides a pattern matching DSL using TableGen:
+**Add to `NNOps.td`:**
 
 ```tablegen
-// Fusion pattern: relu(dense(x)) -> fused_dense_relu(x)
-def FuseDenseReluPattern : Pat<
-  // Match this pattern
-  (ReluOp (DenseOp $input, $weights, $bias)),
-
-  // Replace with this
-  (FusedDenseReluOp $input, $weights, $bias)
->;
+def FusedDenseReluOp : NN_Op<"fused_dense_relu", [Pure]> {
+  let summary = "Fused dense + ReLU layer";
+  let arguments = (ins
+    AnyTensor:$input,
+    AnyTensor:$weights,
+    AnyTensor:$bias
+  );
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = [{
+    $input `,` $weights `,` $bias attr-dict `:`
+    type($input) `,` type($weights) `,` type($bias) `->` type($output)
+  }];
+}
 ```
 
-### 4.3 Imperative Pattern Rewriting (C++)
+### Step 2: Implement Fusion Pattern (3-4 hours)
 
-For complex patterns, write C++ code:
+**File: `lib/NN/NNPatterns.cpp`**
 
 ```cpp
+#include "NN/NNOps.h"
+#include "mlir/IR/PatternMatch.h"
+
+namespace mlir {
+namespace nn {
+
+// Pattern: relu(dense(x)) -> fused_dense_relu(x)
 struct FuseDenseReluPattern : public OpRewritePattern<ReluOp> {
   using OpRewritePattern<ReluOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ReluOp reluOp,
                                 PatternRewriter &rewriter) const override {
     // Check if input comes from a DenseOp
-    auto denseOp = reluOp.getOperand().getDefiningOp<DenseOp>();
-    if (!denseOp) return failure();
+    auto denseOp = reluOp.getInput().getDefiningOp<DenseOp>();
+    if (!denseOp)
+      return failure();
 
     // Check if DenseOp has only one use (safe to fuse)
-    if (!denseOp->hasOneUse()) return failure();
+    if (!denseOp->hasOneUse())
+      return failure();
 
     // Create fused operation
     rewriter.replaceOpWithNewOp<FusedDenseReluOp>(
       reluOp,
+      reluOp.getType(),
       denseOp.getInput(),
       denseOp.getWeights(),
       denseOp.getBias()
@@ -747,645 +428,989 @@ struct FuseDenseReluPattern : public OpRewritePattern<ReluOp> {
     return success();
   }
 };
+
+// Register pattern with the system
+void populateFusionPatterns(RewritePatternSet &patterns) {
+  patterns.add<FuseDenseReluPattern>(patterns.getContext());
+}
+
+} // namespace nn
+} // namespace mlir
 ```
 
-### 4.4 Key Optimization Patterns for Hardware Accelerators
+### Step 3: Create Fusion Pass (2-3 hours)
 
-**Pattern 1: Operation Fusion**
-- Fuse multiple operations to reduce memory traffic
-- Example: `conv + batch_norm + relu` → `fused_conv_bn_relu`
+**File: `include/NN/NNPasses.td`**
 
-**Pattern 2: Constant Folding**
-- Compute known values at compile time
-- Example: `%x = arith.addi %c1, %c2` → `%x = arith.constant 3`
+```tablegen
+include "mlir/Pass/PassBase.td"
 
-**Pattern 3: Algebraic Simplification**
-- Use mathematical identities
-- Example: `%y = arith.muli %x, 1` → `%y = %x`
+def FusionPass : Pass<"nn-fusion", "func::FuncOp"> {
+  let summary = "Fuse neural network operations";
+  let constructor = "mlir::nn::createFusionPass()";
+}
+```
 
-**Pattern 4: Data Layout Transformation**
-- Change tensor layout for hardware efficiency
-- Example: NCHW → NHWC for certain accelerators
+**File: `lib/NN/FusionPass.cpp`**
 
-### 4.5 Practical Exercise: Implement Fusion Patterns
+```cpp
+#include "NN/NNPasses.h"
+#include "NN/NNOps.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-**Objective**: Write patterns that reduce memory traffic
+namespace mlir {
+namespace nn {
 
-Implement these patterns:
-1. Fuse `dense + relu`
-2. Fuse `dense + relu + dense` (two-layer fusion)
-3. Eliminate identity operations (`relu(relu(x))` → `relu(x)`)
-4. Constant propagation through operations
+struct FusionPass : public impl::FusionPassBase<FusionPass> {
+  void runOnOperation() override {
+    RewritePatternSet patterns(&getContext());
+    populateFusionPatterns(patterns);
 
-Test with:
+    // Apply patterns greedily
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+      signalPassFailure();
+  }
+};
+
+std::unique_ptr<Pass> createFusionPass() {
+  return std::make_unique<FusionPass>();
+}
+
+} // namespace nn
+} // namespace mlir
+```
+
+### Step 4: Test Fusion (1 hour)
+
 ```bash
-mlir-opt input.mlir -nn-fusion-pass -o optimized.mlir
+# Create test
+cat > fusion_test.mlir << 'EOF'
+func.func @test(%input: tensor<1x784xf32>,
+                %w: tensor<784x256xf32>,
+                %b: tensor<256xf32>) -> tensor<1x256xf32> {
+  %dense = nn.dense %input, %w, %b :
+    tensor<1x784xf32>, tensor<784x256xf32>, tensor<256xf32> -> tensor<1x256xf32>
+  %relu = nn.relu %dense : tensor<1x256xf32>
+  return %relu : tensor<1x256xf32>
+}
+EOF
+
+# Run fusion pass
+./nn-opt fusion_test.mlir --nn-fusion
+
+# Expected output: should see nn.fused_dense_relu instead of separate ops
 ```
 
-**Deliverable**: Show before/after MLIR IR demonstrating your optimizations
+### Deliverable
+✅ Fusion pass that combines dense + relu
+✅ Understand pattern matching and rewriting
+✅ Can verify optimization worked
 
 ---
 
-## Phase 5: Hardware-Oriented Optimizations (Week 7-8)
+## Week 2, Day 11-14: Loop Tiling for Hardware
 
-### 5.1 Understanding Hardware Constraints
+### Goal
+Implement loop tiling for matrix multiplication to fit in CPU cache.
 
-**First Principles**: Hardware accelerators have specific characteristics:
+### The Problem
 
-1. **Parallel Execution Units**: Can compute multiple operations simultaneously
-2. **Memory Hierarchy**: Fast small cache, slow large DRAM
-3. **Data Movement Cost**: Moving data is more expensive than computing
-4. **Specialized Units**: Matrix multiply units, vector processors
+```
+Large matmul (1024x1024): Doesn't fit in L1 cache (32KB)
+→ Cache misses → Slow execution
+```
 
-**The Optimization Goal**: Maximize compute utilization while minimizing data movement
+### The Solution: Tiling
 
-### 5.2 Tiling: Breaking Large Operations into Chunks
+```
+Break into small tiles (64x64): Fits in L1 cache
+→ Reuse data → Fast execution
+```
 
-**First Principles**: Large matrices don't fit in fast memory. Solution: process in tiles.
+### Performance Impact
 
+- **Without tiling**: ~10 GFLOPS (memory-bound)
+- **With tiling**: ~50 GFLOPS (compute-bound)
+- **Theoretical max**: ~100 GFLOPS (on modern CPU)
+
+### Step 1: Lower to Linalg (2-3 hours)
+
+First, convert your high-level operations to linalg operations that can be tiled.
+
+**File: `lib/NN/LowerToLinalg.cpp`**
+
+```cpp
+// Pattern to lower nn.dense to linalg.matmul + linalg.add
+struct DenseToLinalgPattern : public OpRewritePattern<DenseOp> {
+  using OpRewritePattern<DenseOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(DenseOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    // Step 1: Matmul (input @ weights)
+    auto matmul = rewriter.create<linalg::MatmulOp>(
+      loc,
+      ValueRange{op.getInput(), op.getWeights()},
+      ValueRange{/* output buffer */}
+    );
+
+    // Step 2: Add bias
+    auto add = rewriter.create<linalg::AddOp>(
+      loc,
+      ValueRange{matmul.getResult(0), op.getBias()},
+      ValueRange{/* output buffer */}
+    );
+
+    rewriter.replaceOp(op, add.getResult(0));
+    return success();
+  }
+};
+```
+
+### Step 2: Apply Tiling Transformation (4-5 hours)
+
+Use MLIR's built-in tiling utilities:
+
+**File: `lib/NN/TilingPass.cpp`**
+
+```cpp
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
+
+struct TilingPass : public PassWrapper<TilingPass, OperationPass<func::FuncOp>> {
+  void runOnOperation() override {
+    auto func = getOperation();
+
+    // Tile size (typically 32, 64, or 128)
+    int64_t tileSize = 64;
+
+    func.walk([&](linalg::MatmulOp matmulOp) {
+      OpBuilder builder(matmulOp);
+
+      // Tile the matmul into smaller blocks
+      SmallVector<int64_t> tileSizes = {tileSize, tileSize, tileSize};
+
+      auto tilingInterface = cast<TilingInterface>(matmulOp.getOperation());
+      auto options = scf::SCFTilingOptions().setTileSizes(tileSizes);
+
+      FailureOr<scf::SCFTilingResult> tilingResult =
+        scf::tileUsingSCFForOp(builder, tilingInterface, options);
+
+      if (failed(tilingResult))
+        return;
+
+      // Replace original op with tiled version
+      matmulOp->replaceAllUsesWith(tilingResult->replacements);
+      matmulOp->erase();
+    });
+  }
+};
+```
+
+### Step 3: Understand the Transformation (1-2 hours)
+
+**Before tiling:**
 ```mlir
-// Before: One large matmul
-%C = linalg.matmul ins(%A, %B) outs(%C_init)
-     : tensor<1024x1024xf32>, tensor<1024x1024xf32> -> tensor<1024x1024xf32>
+%C = linalg.matmul ins(%A, %B) outs(%C_init) :
+  tensor<1024x1024xf32>, tensor<1024x1024xf32> -> tensor<1024x1024xf32>
+```
 
-// After: Tiled into 64x64 blocks (fits in cache)
+**After tiling (tile size = 64):**
+```mlir
 scf.for %i = 0 to 1024 step 64 {
   scf.for %j = 0 to 1024 step 64 {
     scf.for %k = 0 to 1024 step 64 {
+      // Extract 64x64 tiles
       %A_tile = tensor.extract_slice %A[%i, %k][64, 64][1, 1]
       %B_tile = tensor.extract_slice %B[%k, %j][64, 64][1, 1]
-      %C_tile = linalg.matmul ins(%A_tile, %B_tile) outs(%C_tile_init)
-      %C = tensor.insert_slice %C_tile into %C[%i, %j][64, 64][1, 1]
+      %C_tile = tensor.extract_slice %C[%i, %j][64, 64][1, 1]
+
+      // Compute on small tile (fits in cache)
+      %C_tile_result = linalg.matmul ins(%A_tile, %B_tile) outs(%C_tile)
+
+      // Insert result back
+      %C_new = tensor.insert_slice %C_tile_result into %C[%i, %j][64, 64][1, 1]
     }
   }
 }
 ```
 
-**Tile Size Selection**:
-- Too small: Overhead from loop management
-- Too large: Cache misses, no parallelism
-- Optimal: Fits in L1/L2 cache, balances parallelism
+### Step 4: Test and Benchmark (2-3 hours)
 
-### 5.3 Implementing Tiling Transformation
+```bash
+# Create large matmul test
+cat > large_matmul.mlir << 'EOF'
+func.func @matmul(%A: tensor<1024x1024xf32>,
+                  %B: tensor<1024x1024xf32>) -> tensor<1024x1024xf32> {
+  %C_init = tensor.empty() : tensor<1024x1024xf32>
+  %C = linalg.matmul ins(%A, %B : tensor<1024x1024xf32>, tensor<1024x1024xf32>)
+                     outs(%C_init : tensor<1024x1024xf32>) -> tensor<1024x1024xf32>
+  return %C : tensor<1024x1024xf32>
+}
+EOF
 
-```cpp
-struct TileMatmulPattern : public OpRewritePattern<linalg::MatmulOp> {
-  TileMatmulPattern(MLIRContext *context, int tileSize)
-      : OpRewritePattern<linalg::MatmulOp>(context), tileSize(tileSize) {}
+# Apply tiling
+./nn-opt large_matmul.mlir --linalg-tile="tile-sizes=64,64,64" -o tiled.mlir
 
-  LogicalResult matchAndRewrite(linalg::MatmulOp matmul,
-                                PatternRewriter &rewriter) const override {
-    // Get dimensions
-    auto aType = matmul.getInputs()[0].getType().cast<RankedTensorType>();
-    auto shape = aType.getShape();
-
-    // Create tiling loops
-    SmallVector<Value> lowerBounds(3, rewriter.create<arith::ConstantIndexOp>(loc, 0));
-    SmallVector<Value> upperBounds = {
-      rewriter.create<arith::ConstantIndexOp>(loc, shape[0]),
-      rewriter.create<arith::ConstantIndexOp>(loc, shape[1]),
-      rewriter.create<arith::ConstantIndexOp>(loc, shape[2])
-    };
-    SmallVector<Value> steps(3, rewriter.create<arith::ConstantIndexOp>(loc, tileSize));
-
-    // Build nested loops with tiled matmul inside
-    // (Implementation details depend on your IR structure)
-
-    return success();
-  }
-
-private:
-  int tileSize;
-};
+# Compare
+mlir-opt large_matmul.mlir | wc -l  # Before
+mlir-opt tiled.mlir | wc -l         # After (should be much longer)
 ```
 
-### 5.4 Vectorization: SIMD Operations
-
-**First Principles**: Modern processors can operate on vectors (multiple data elements) in one instruction.
-
-```mlir
-// Before: Scalar operations
-scf.for %i = 0 to 1024 {
-  %val = tensor.extract %input[%i]
-  %result = arith.mulf %val, %scale
-  tensor.insert %result into %output[%i]
-}
-
-// After: Vector operations (process 8 elements at once)
-scf.for %i = 0 to 1024 step 8 {
-  %vec = vector.transfer_read %input[%i] : tensor<1024xf32>, vector<8xf32>
-  %result_vec = arith.mulf %vec, %scale_vec : vector<8xf32>
-  vector.transfer_write %result_vec, %output[%i]
-}
+**Tuning tile size:**
+```bash
+# Try different tile sizes
+for size in 32 64 128 256; do
+  echo "Testing tile size: $size"
+  ./nn-opt large_matmul.mlir --linalg-tile="tile-sizes=$size,$size,$size"
+  # Compile and benchmark
+done
 ```
 
-### 5.5 Practical Exercise: Implement Hardware Optimizations
-
-**Objective**: Transform operations for efficient hardware execution
-
-Tasks:
-1. Implement loop tiling for matrix multiplication
-2. Add a command-line parameter for tile size
-3. Implement basic vectorization for element-wise operations
-4. Measure theoretical performance (FLOPS) before and after
-
-**Deliverable**:
-- Optimized MLIR code with configurable tiling
-- Performance analysis showing reduction in memory accesses
+### Deliverable
+✅ Tiling pass that breaks large matmuls into cache-friendly blocks
+✅ Understand cache hierarchy and why tiling helps
+✅ Can tune tile size for target hardware
 
 ---
 
-## Phase 6: Memory Hierarchy & Data Movement (Week 9-10)
+## Week 3, Day 15-17: Tensor to Memory Lowering
 
-### 6.1 Understanding the Memory Wall
+### Goal
+Lower from high-level tensors to low-level memory operations (memref).
 
-**First Principles**: The Performance Equation
+### Why This Matters
 
-```
-Time = (Compute_ops / FLOPS) + (Data_movement / Bandwidth)
-```
+- **Tensors**: Mathematical abstraction, immutable
+- **Memrefs**: Physical memory, mutable, maps to hardware
 
-For modern accelerators:
-- Compute: ~100 TFLOPS (very fast)
-- DRAM bandwidth: ~1 TB/s
-- To saturate compute: need 100 FLOP per byte moved!
+Hardware doesn't understand tensors - it needs explicit memory operations.
 
-**Reality**: Most operations are memory-bound, not compute-bound.
-
-### 6.2 The Memory Hierarchy
-
-```
-Register File:      ~100 KB,    ~10 TB/s,    1 cycle
-L1 Cache:           ~100 KB,    ~5 TB/s,     4 cycles
-L2 Cache:           ~10 MB,     ~2 TB/s,     20 cycles
-DRAM:               ~40 GB,     ~1 TB/s,     200 cycles
-```
-
-**Optimization Strategy**: Keep data in fast memory as long as possible
-
-### 6.3 From Tensors to Memory References
-
-**Key Transition**: Moving from mathematical abstractions to physical memory
+### The Transformation
 
 ```mlir
-// High-level: tensor (immutable, abstract)
-func.func @compute(%input: tensor<1024xf32>) -> tensor<1024xf32> {
-  %result = nn.relu %input : tensor<1024xf32>
+// Before: High-level
+func.func @add(%t1: tensor<1024xf32>, %t2: tensor<1024xf32>) -> tensor<1024xf32> {
+  %result = nn.add %t1, %t2 : tensor<1024xf32>
   return %result : tensor<1024xf32>
 }
 
-// Low-level: memref (mutable, physical memory)
-func.func @compute(%input: memref<1024xf32>, %output: memref<1024xf32>) {
+// After: Low-level
+func.func @add(%m1: memref<1024xf32>, %m2: memref<1024xf32>, %m_out: memref<1024xf32>) {
   scf.for %i = 0 to 1024 {
-    %val = memref.load %input[%i] : memref<1024xf32>
-    %zero = arith.constant 0.0 : f32
-    %result = arith.maxf %val, %zero : f32  // ReLU
-    memref.store %result, %output[%i] : memref<1024xf32>
+    %v1 = memref.load %m1[%i] : memref<1024xf32>
+    %v2 = memref.load %m2[%i] : memref<1024xf32>
+    %sum = arith.addf %v1, %v2 : f32
+    memref.store %sum, %m_out[%i] : memref<1024xf32>
   }
   return
 }
 ```
 
-### 6.4 Buffer Allocation and Management
+### Step 1: Use Bufferization (3-4 hours)
 
-**Problem**: Where do we allocate memory?
+MLIR provides the "bufferization" framework to convert tensors to memrefs.
 
-```mlir
-// Allocate in fast scratchpad memory (for accelerators)
-%buffer = memref.alloc() : memref<64x64xf32, #scratchpad>
-
-// Allocate in main memory
-%buffer = memref.alloc() : memref<1024x1024xf32, #dram>
-```
-
-**Pattern**: Allocate temporaries in fast memory, inputs/outputs in DRAM
-
-### 6.5 Implementing Buffer Optimization
-
-**Lowering Pass**: tensor → memref
+**File: `lib/NN/Bufferize.cpp`**
 
 ```cpp
-struct TensorToMemrefLowering : public OpConversionPattern<tensor::ExtractOp> {
-  using OpConversionPattern::OpConversionPattern;
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 
-  LogicalResult matchAndRewrite(
-      tensor::ExtractOp op,
-      OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+void createBufferizationPipeline(OpPassManager &pm) {
+  // Step 1: Convert linalg ops to use buffers
+  pm.addPass(createLinalgBufferizePass());
 
-    // Replace tensor.extract with memref.load
-    rewriter.replaceOpWithNewOp<memref::LoadOp>(
-      op,
-      adaptor.getTensor(),
-      adaptor.getIndices()
-    );
+  // Step 2: Convert tensor operations to memref
+  pm.addPass(bufferization::createBufferizationPass());
 
-    return success();
-  }
-};
+  // Step 3: Finalize buffer deallocation
+  pm.addPass(bufferization::createBufferDeallocationPass());
+}
 ```
 
-### 6.6 Practical Exercise: Memory-Aware Compilation
+### Step 2: Lower Operations to Loops (2-3 hours)
 
-**Objective**: Implement full tensor-to-memref lowering
+Convert operations to explicit loops.
 
-Tasks:
-1. Write a pass that converts tensor operations to memref operations
-2. Implement buffer allocation for intermediate results
-3. Add buffer reuse (same buffer for multiple ops when safe)
-4. Implement copy operations for data movement between memory levels
+```cpp
+// Lower linalg operations to loops
+pm.addPass(createConvertLinalgToLoopsPass());
 
-**Deliverable**:
-- A complete lowering pipeline: `tensor → memref → explicit loads/stores`
-- Memory usage analysis showing buffer reuse
+// Lower scf.for to control flow
+pm.addPass(createConvertSCFToCFPass());
+```
+
+### Step 3: Test the Lowering (1-2 hours)
+
+```bash
+# Full lowering pipeline
+./nn-opt test.mlir \
+  --linalg-bufferize \
+  --convert-linalg-to-loops \
+  --convert-scf-to-cf \
+  --buffer-deallocation \
+  -o lowered.mlir
+
+# Verify memref operations
+cat lowered.mlir
+# Should see: memref.alloc, memref.load, memref.store
+```
+
+### Deliverable
+✅ Lowering pipeline from tensors to memrefs
+✅ Understand memory allocation and deallocation
+✅ Can see explicit loads/stores in generated code
 
 ---
 
-## Phase 7: Building the Complete Pipeline (Week 11)
+## Week 3, Day 18-21: End-to-End Compilation
 
-### 7.1 The Compilation Pipeline Architecture
+### Goal
+Build a complete pipeline from your NN dialect to executable code.
+
+### The Full Pipeline
 
 ```
-Input MLIR (nn dialect)
-    ↓
-[Optimization Passes]
-    ↓ Pattern fusion
-    ↓ Algebraic simplification
-    ↓
-[Tiling Pass]
-    ↓ Insert loops with tile sizes
-    ↓
-[Lowering to linalg]
-    ↓ Convert nn ops to linalg ops
-    ↓
-[Memory Planning]
-    ↓ tensor → memref
-    ↓ Buffer allocation
-    ↓
-[Vectorization]
-    ↓ Scalar → vector operations
-    ↓
-[Lowering to LLVM]
-    ↓ Convert to LLVM IR
-    ↓
-[LLVM Backend]
-    ↓
-Machine Code
+NN Dialect (nn.dense, nn.relu)
+    ↓ [Fusion Pass]
+NN Dialect (nn.fused_dense_relu)
+    ↓ [Lower to Linalg]
+Linalg Dialect (linalg.matmul, linalg.generic)
+    ↓ [Tiling Pass]
+Tiled Linalg (nested scf.for loops)
+    ↓ [Bufferization]
+Memref Dialect (memref.load, memref.store)
+    ↓ [Lower to LLVM]
+LLVM IR
+    ↓ [LLVM Backend]
+Machine Code (executable)
 ```
 
-### 7.2 Pass Manager Implementation
+### Step 1: Create Pipeline Pass (2-3 hours)
+
+**File: `lib/NN/Pipeline.cpp`**
 
 ```cpp
 void buildNNCompilerPipeline(OpPassManager &pm) {
-  // High-level optimizations
-  pm.addPass(createFusionPass());
-  pm.addPass(createConstantFoldingPass());
+  // ===== High-level optimizations =====
+  pm.addPass(nn::createFusionPass());
   pm.addPass(createCSEPass());  // Common subexpression elimination
 
-  // Hardware-specific optimizations
-  pm.addPass(createTilingPass(/*tileSize=*/64));
-  pm.addPass(createLayoutOptimizationPass());
+  // ===== Lower to Linalg =====
+  pm.addPass(nn::createLowerToLinalgPass());
 
-  // Lowering
-  pm.addPass(createLowerToLinalgPass());
-  pm.addPass(createBufferDeallocationPass());
-  pm.addPass(createConvertTensorToMemrefPass());
+  // ===== Hardware optimizations =====
+  pm.addPass(createLinalgTilingPass(/*tileSize=*/64));
 
-  // Low-level optimizations
-  pm.addPass(createVectorizationPass());
+  // ===== Lower to memory operations =====
+  pm.addPass(createLinalgBufferizePass());
+  pm.addPass(bufferization::createBufferizationPass());
+  pm.addPass(createConvertLinalgToLoopsPass());
+
+  // ===== Lower to LLVM IR =====
+  pm.addPass(createConvertSCFToCFPass());
+  pm.addPass(createConvertMathToLLVMPass());
   pm.addPass(createMemRefToLLVMPass());
-  pm.addPass(createConvertToLLVMPass());
+  pm.addPass(createConvertFuncToLLVMPass());
+  pm.addPass(createReconcileUnrealizedCastsPass());
 }
 ```
 
-### 7.3 Creating Your Compiler Tool
+### Step 2: Extend nn-opt Tool (1 hour)
 
-**File**: `nn-opt.cpp` (similar to mlir-opt)
+**Update `tools/nn-opt.cpp`:**
 
 ```cpp
 int main(int argc, char **argv) {
-  // Register dialects
-  DialectRegistry registry;
-  registry.insert<nn::NNDialect>();
-  registry.insert<arith::ArithDialect>();
-  registry.insert<linalg::LinalgDialect>();
-  registry.insert<tensor::TensorDialect>();
-  registry.insert<memref::MemRefDialect>();
+  mlir::DialectRegistry registry;
+
+  // Register all needed dialects
+  registry.insert<mlir::nn::NNDialect>();
+  registry.insert<mlir::func::FuncDialect>();
+  registry.insert<mlir::arith::ArithDialect>();
+  registry.insert<mlir::linalg::LinalgDialect>();
+  registry.insert<mlir::scf::SCFDialect>();
+  registry.insert<mlir::memref::MemRefDialect>();
+  registry.insert<mlir::LLVM::LLVMDialect>();
 
   // Register passes
-  registerNNPasses();
+  nn::registerNNPasses();
+  mlir::registerTransformsPasses();
+  mlir::linalg::registerPasses();
 
-  // Parse command line and run passes
   return mlir::asMainReturnCode(
-    mlir::MlirOptMain(argc, argv, "NN Compiler\n", registry)
-  );
+    mlir::MlirOptMain(argc, argv, "NN Compiler\n", registry));
 }
 ```
 
-### 7.4 Practical Exercise: End-to-End Compilation
+### Step 3: Create Compilation Script (1 hour)
 
-**Objective**: Compile a simple neural network to executable code
+**File: `compile.sh`**
 
-**Input**: A 2-layer MLP in your nn dialect
+```bash
+#!/bin/bash
+set -e
+
+INPUT=$1
+OUTPUT=${2:-a.out}
+
+echo "=== Stage 1: NN optimizations ==="
+./nn-opt $INPUT \
+  --nn-fusion \
+  --cse \
+  -o stage1.mlir
+
+echo "=== Stage 2: Lower to Linalg ==="
+./nn-opt stage1.mlir \
+  --convert-nn-to-linalg \
+  -o stage2.mlir
+
+echo "=== Stage 3: Hardware optimizations ==="
+./nn-opt stage2.mlir \
+  --linalg-tile="tile-sizes=64,64,64" \
+  -o stage3.mlir
+
+echo "=== Stage 4: Bufferization ==="
+./nn-opt stage3.mlir \
+  --linalg-bufferize \
+  --convert-linalg-to-loops \
+  --buffer-deallocation \
+  -o stage4.mlir
+
+echo "=== Stage 5: Lower to LLVM ==="
+./nn-opt stage4.mlir \
+  --convert-scf-to-cf \
+  --convert-memref-to-llvm \
+  --convert-func-to-llvm \
+  --reconcile-unrealized-casts \
+  -o stage5.mlir
+
+echo "=== Stage 6: Translate to LLVM IR ==="
+mlir-translate --mlir-to-llvmir stage5.mlir -o stage6.ll
+
+echo "=== Stage 7: Compile to object file ==="
+llc stage6.ll -o stage7.o -filetype=obj
+
+echo "=== Stage 8: Link to executable ==="
+clang stage7.o -o $OUTPUT
+
+echo "Done! Executable: $OUTPUT"
+```
+
+### Step 4: Test End-to-End (2-3 hours)
+
+**Create full test:**
+
 ```mlir
-func.func @mlp_inference(%input: tensor<1x784xf32>,
-                         %w1: tensor<784x256xf32>,
-                         %b1: tensor<256xf32>,
-                         %w2: tensor<256x10xf32>,
-                         %b2: tensor<10xf32>) -> tensor<1x10xf32> {
-  %hidden = nn.dense %input, %w1, %b1
-  %hidden_act = nn.relu %hidden
-  %output = nn.dense %hidden_act, %w2, %b2
+// mlp.mlir
+func.func @mlp_inference(
+  %input: tensor<1x784xf32>,
+  %w1: tensor<784x256xf32>,
+  %b1: tensor<256xf32>,
+  %w2: tensor<256x10xf32>,
+  %b2: tensor<10xf32>
+) -> tensor<1x10xf32> {
+  // Layer 1
+  %h1 = nn.dense %input, %w1, %b1 :
+    tensor<1x784xf32>, tensor<784x256xf32>, tensor<256xf32> -> tensor<1x256xf32>
+  %h1_act = nn.relu %h1 : tensor<1x256xf32>
+
+  // Layer 2
+  %output = nn.dense %h1_act, %w2, %b2 :
+    tensor<1x256xf32>, tensor<256x10xf32>, tensor<10xf32> -> tensor<1x10xf32>
+
   return %output : tensor<1x10xf32>
 }
 ```
 
-**Pipeline**:
+**Compile and run:**
+
 ```bash
-# Your compiler
-nn-opt input.mlir \
-  -nn-fusion \
-  -nn-tiling \
-  -convert-nn-to-linalg \
-  -convert-linalg-to-loops \
-  -convert-tensor-to-memref \
-  -vectorize \
-  -convert-to-llvm \
-  -o output.ll
+chmod +x compile.sh
+./compile.sh mlp.mlir mlp_executable
 
-# LLVM backend
-llc output.ll -o output.o
-clang output.o -o mlp_inference
+# Inspect each stage
+echo "=== Original ==="
+cat mlp.mlir
+
+echo "=== After fusion ==="
+cat stage1.mlir | grep "nn\."
+
+echo "=== After tiling ==="
+cat stage3.mlir | grep "scf.for"
+
+echo "=== Final LLVM IR ==="
+cat stage6.ll | head -50
 ```
 
-**Deliverable**:
-- A working executable that runs your neural network
-- Compilation pipeline that applies all your optimizations
+### Step 5: Add Runtime Wrapper (2-3 hours)
 
----
+Create C++ wrapper to call the compiled function:
 
-## Phase 8: Testing & Validation (Week 12)
-
-### 8.1 Testing Strategies
-
-**Three Levels of Testing**:
-
-1. **Unit Tests**: Individual passes
-```cpp
-TEST(FusionTest, FuseDenseRelu) {
-  MLIRContext context;
-  auto module = parseSourceString<ModuleOp>(R"(
-    func.func @test(%x: tensor<10xf32>) -> tensor<10xf32> {
-      %w = arith.constant dense<1.0> : tensor<10x10xf32>
-      %b = arith.constant dense<0.0> : tensor<10xf32>
-      %dense = nn.dense %x, %w, %b
-      %relu = nn.relu %dense
-      return %relu : tensor<10xf32>
-    }
-  )", &context);
-
-  PassManager pm(&context);
-  pm.addPass(createFusionPass());
-  ASSERT_TRUE(succeeded(pm.run(module.get())));
-
-  // Check that fusion happened
-  auto func = module->lookupSymbol<func::FuncOp>("test");
-  EXPECT_FALSE(func.walk([](ReluOp op) { return WalkResult::interrupt(); }).wasInterrupted());
-}
-```
-
-2. **Integration Tests**: Full pipeline
-```bash
-# FileCheck tests (MLIR standard)
-# RUN: nn-opt %s -nn-fusion | FileCheck %s
-
-# CHECK-LABEL: func @test
-func.func @test(%x: tensor<10xf32>) -> tensor<10xf32> {
-  # CHECK-NOT: nn.relu
-  # CHECK: nn.fused_dense_relu
-  %w = arith.constant dense<1.0> : tensor<10x10xf32>
-  %b = arith.constant dense<0.0> : tensor<10xf32>
-  %dense = nn.dense %x, %w, %b
-  %relu = nn.relu %dense
-  return %relu : tensor<10xf32>
-}
-```
-
-3. **End-to-End Tests**: Numerical correctness
-```python
-# Compare against reference implementation
-import numpy as np
-
-def test_mlp_correctness():
-    # Generate random inputs
-    x = np.random.randn(1, 784).astype(np.float32)
-    w1 = np.random.randn(784, 256).astype(np.float32)
-    b1 = np.random.randn(256).astype(np.float32)
-    w2 = np.random.randn(256, 10).astype(np.float32)
-    b2 = np.random.randn(10).astype(np.float32)
-
-    # Reference implementation
-    hidden = np.maximum(0, x @ w1 + b1)  # ReLU
-    output_ref = hidden @ w2 + b2
-
-    # Run compiled version
-    output_compiled = run_compiled_mlp(x, w1, b1, w2, b2)
-
-    # Check numerical accuracy
-    np.testing.assert_allclose(output_ref, output_compiled, rtol=1e-5)
-```
-
-### 8.2 Performance Benchmarking
-
-**What to Measure**:
-1. **Compile Time**: How long does optimization take?
-2. **Code Quality**: How fast is the generated code?
-3. **Memory Usage**: How much memory is allocated?
+**File: `runtime.cpp`**
 
 ```cpp
-// Simple benchmarking harness
-void benchmark_matmul() {
+#include <iostream>
+#include <vector>
+#include <chrono>
+
+// Forward declare the compiled MLIR function
+extern "C" void mlp_inference(float* input, float* w1, float* b1,
+                               float* w2, float* b2, float* output);
+
+int main() {
+  // Allocate memory
+  std::vector<float> input(784);
+  std::vector<float> w1(784 * 256);
+  std::vector<float> b1(256);
+  std::vector<float> w2(256 * 10);
+  std::vector<float> b2(10);
+  std::vector<float> output(10);
+
+  // Initialize with random data
+  for (auto& v : input) v = rand() / (float)RAND_MAX;
+  for (auto& v : w1) v = rand() / (float)RAND_MAX - 0.5f;
+  for (auto& v : b1) v = 0.0f;
+  for (auto& v : w2) v = rand() / (float)RAND_MAX - 0.5f;
+  for (auto& v : b2) v = 0.0f;
+
+  // Benchmark
   auto start = std::chrono::high_resolution_clock::now();
 
-  // Run compiled function
   for (int i = 0; i < 1000; i++) {
-    compiled_matmul(A, B, C);
+    mlp_inference(input.data(), w1.data(), b1.data(),
+                  w2.data(), b2.data(), output.data());
   }
 
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-  // Calculate GFLOPS
-  double flops = 2.0 * M * N * K * 1000;  // 1000 iterations
-  double gflops = flops / duration.count() / 1000.0;
+  std::cout << "Average time: " << duration.count() / 1000.0 << " μs\n";
+  std::cout << "Output sample: ";
+  for (int i = 0; i < 10; i++) std::cout << output[i] << " ";
+  std::cout << "\n";
 
-  std::cout << "Performance: " << gflops << " GFLOPS\n";
+  return 0;
 }
 ```
 
-### 8.3 Debugging Tools
+**Compile with runtime:**
 
-**Essential Debugging Flags**:
 ```bash
-# Print IR after each pass
-nn-opt input.mlir -nn-fusion -print-ir-after-all
-
-# Print IR only for specific pass
-nn-opt input.mlir -print-ir-after=nn-fusion
-
-# Check IR validity
-nn-opt input.mlir -verify-each
-
-# Debug pattern matching
-nn-opt input.mlir -debug-only=pattern-matcher
+clang++ runtime.cpp stage7.o -o mlp_benchmark
+./mlp_benchmark
 ```
 
-### 8.4 Practical Exercise: Build Test Suite
-
-**Objective**: Comprehensive testing infrastructure
-
-Tasks:
-1. Write unit tests for each optimization pass
-2. Create FileCheck integration tests
-3. Implement numerical correctness tests
-4. Build performance regression tests
-5. Set up continuous integration (GitHub Actions/Jenkins)
-
-**Deliverable**:
-- Test suite with >80% code coverage
-- CI pipeline that runs tests on every commit
-- Performance dashboard tracking GFLOPS over time
+### Deliverable
+✅ Complete compilation pipeline
+✅ Can compile NN dialect to executable
+✅ Benchmark showing performance
 
 ---
 
-## Reference Projects & Further Learning
+## Week 4, Day 22-24: Testing & Validation
 
-### Minimal Working Examples
+### Goal
+Ensure your compiler produces correct and performant code.
 
-1. **MLIR Toy Tutorial**: `llvm-project/mlir/examples/toy/`
-   - Canonical MLIR tutorial
-   - Builds a complete compiler for a toy language
-   - ~2000 lines of code
+### Three Types of Tests
 
-2. **Standalone MLIR Example**: `llvm-project/mlir/examples/standalone/`
-   - Template for out-of-tree MLIR projects
-   - Shows proper CMake setup
+1. **Unit Tests**: Individual passes
+2. **Integration Tests**: Full pipeline
+3. **Performance Tests**: Benchmark against reference
 
-3. **IREE (Intermediate Representation Execution Environment)**
-   - Production compiler for ML models
-   - Excellent reference for hardware targeting
-   - https://github.com/openxla/iree
+### Step 1: Unit Tests with FileCheck (4-6 hours)
 
-### Key Papers & Resources
+MLIR uses FileCheck for testing transformations.
 
-1. **MLIR: A Compiler Infrastructure for the End of Moore's Law**
-   - Original MLIR paper
-   - Explains the motivation and design
+**File: `test/fusion.mlir`**
 
-2. **Tensor Comprehensions**
-   - Polyhedral optimization for ML
-   - Background on loop transformations
+```mlir
+// RUN: nn-opt %s --nn-fusion | FileCheck %s
 
-3. **Halide**: Image processing DSL
-   - Separation of algorithm and schedule
-   - Inspiration for many MLIR concepts
+// CHECK-LABEL: func @test_fusion
+func.func @test_fusion(%input: tensor<10xf32>,
+                       %w: tensor<10x5xf32>,
+                       %b: tensor<5xf32>) -> tensor<5xf32> {
+  // CHECK-NOT: nn.dense
+  // CHECK-NOT: nn.relu
+  // CHECK: nn.fused_dense_relu
+  %dense = nn.dense %input, %w, %b :
+    tensor<10xf32>, tensor<10x5xf32>, tensor<5xf32> -> tensor<5xf32>
+  %relu = nn.relu %dense : tensor<5xf32>
+  return %relu : tensor<5xf32>
+}
+```
 
-### Hardware Accelerator Background
+**Run tests:**
 
-1. **NVIDIA CUDA Programming Guide**
-   - Understanding GPU memory hierarchy
-   - Thread/block execution model
+```bash
+# Using LLVM's lit testing tool
+lit test/
+```
 
-2. **Google TPU Architecture**
-   - Systolic arrays for matrix multiplication
-   - Memory bandwidth optimization
+**Create more tests:**
 
-3. **Cerebras Wafer-Scale Engine**
-   - Extreme parallelism
-   - On-chip SRAM optimization
+- `test/tiling.mlir` - Verify tiling creates loops
+- `test/lowering.mlir` - Verify memref operations
+- `test/pipeline.mlir` - Full pipeline test
+
+### Step 2: Numerical Correctness (4-6 hours)
+
+**File: `test/correctness.cpp`**
+
+```cpp
+#include <cassert>
+#include <cmath>
+#include <iostream>
+
+extern "C" void mlp_inference(float* input, float* w1, float* b1,
+                               float* w2, float* b2, float* output);
+
+// Reference implementation
+void mlp_reference(const float* input, const float* w1, const float* b1,
+                   const float* w2, const float* b2, float* output) {
+  // Layer 1: dense + relu
+  float h1[256] = {0};
+  for (int i = 0; i < 256; i++) {
+    for (int j = 0; j < 784; j++) {
+      h1[i] += input[j] * w1[j * 256 + i];
+    }
+    h1[i] += b1[i];
+    h1[i] = std::max(0.0f, h1[i]);  // ReLU
+  }
+
+  // Layer 2: dense
+  for (int i = 0; i < 10; i++) {
+    output[i] = 0;
+    for (int j = 0; j < 256; j++) {
+      output[i] += h1[j] * w2[j * 10 + i];
+    }
+    output[i] += b2[i];
+  }
+}
+
+int main() {
+  // Allocate and initialize
+  float input[784], w1[784*256], b1[256], w2[256*10], b2[10];
+  float output_compiled[10], output_reference[10];
+
+  for (int i = 0; i < 784; i++) input[i] = (i % 100) / 100.0f;
+  for (int i = 0; i < 784*256; i++) w1[i] = (i % 200 - 100) / 100.0f;
+  for (int i = 0; i < 256; i++) b1[i] = 0.0f;
+  for (int i = 0; i < 256*10; i++) w2[i] = (i % 200 - 100) / 100.0f;
+  for (int i = 0; i < 10; i++) b2[i] = 0.0f;
+
+  // Run both versions
+  mlp_inference(input, w1, b1, w2, b2, output_compiled);
+  mlp_reference(input, w1, b1, w2, b2, output_reference);
+
+  // Compare results
+  float max_error = 0.0f;
+  for (int i = 0; i < 10; i++) {
+    float error = std::abs(output_compiled[i] - output_reference[i]);
+    max_error = std::max(max_error, error);
+    std::cout << "Output[" << i << "]: compiled=" << output_compiled[i]
+              << ", reference=" << output_reference[i]
+              << ", error=" << error << "\n";
+  }
+
+  std::cout << "\nMax error: " << max_error << "\n";
+
+  // Assert correctness (allow small floating point errors)
+  assert(max_error < 1e-4 && "Numerical error too large!");
+
+  std::cout << "✅ Correctness test PASSED\n";
+  return 0;
+}
+```
+
+### Step 3: Performance Benchmark (2-3 hours)
+
+**File: `benchmark/benchmark.cpp`**
+
+```cpp
+#include <iostream>
+#include <chrono>
+#include <vector>
+
+extern "C" void mlp_inference(float* input, float* w1, float* b1,
+                               float* w2, float* b2, float* output);
+
+void benchmark(int iterations) {
+  std::vector<float> input(784), w1(784*256), b1(256), w2(256*10), b2(10), output(10);
+
+  // Warmup
+  for (int i = 0; i < 100; i++) {
+    mlp_inference(input.data(), w1.data(), b1.data(), w2.data(), b2.data(), output.data());
+  }
+
+  // Benchmark
+  auto start = std::chrono::high_resolution_clock::now();
+  for (int i = 0; i < iterations; i++) {
+    mlp_inference(input.data(), w1.data(), b1.data(), w2.data(), b2.data(), output.data());
+  }
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  double avg_time = duration / (double)iterations;
+
+  // Calculate GFLOPS
+  // Layer 1: 784 * 256 * 2 (matmul) = 401,408 ops
+  // Layer 2: 256 * 10 * 2 (matmul) = 5,120 ops
+  double total_ops = 401408 + 5120;
+  double gflops = (total_ops / avg_time) / 1000.0;
+
+  std::cout << "Average time: " << avg_time << " μs\n";
+  std::cout << "Throughput: " << gflops << " GFLOPS\n";
+}
+
+int main() {
+  std::cout << "=== Benchmark with tiling ===\n";
+  benchmark(10000);
+  return 0;
+}
+```
+
+**Compare with/without optimization:**
+
+```bash
+# Without tiling
+./nn-opt mlp.mlir --convert-nn-to-linalg --linalg-bufferize ... -o no_tiling.mlir
+# Compile and benchmark
+./benchmark_no_tiling
+
+# With tiling
+./nn-opt mlp.mlir --convert-nn-to-linalg --linalg-tile="tile-sizes=64,64,64" --linalg-bufferize ... -o with_tiling.mlir
+# Compile and benchmark
+./benchmark_with_tiling
+
+# Compare speedup
+```
+
+### Deliverable
+✅ Unit tests with FileCheck
+✅ Numerical correctness validation
+✅ Performance benchmarks showing optimization impact
 
 ---
 
-## Common Pitfalls & How to Avoid Them
+## Week 4, Day 25-28: Final Project
 
-### Pitfall 1: Starting Too Low-Level
-**Problem**: Jumping into LLVM IR directly
-**Solution**: Stay at the tensor/linalg level as long as possible
+### Goal
+Polish everything into a complete, working compiler.
 
-### Pitfall 2: Ignoring Verification
-**Problem**: Invalid IR that crashes later
-**Solution**: Always run `-verify-each`, implement operation verifiers
+### Checklist
 
-### Pitfall 3: Over-Optimization Too Early
-**Problem**: Trying to implement every optimization
-**Solution**: Start with one optimization, get it working end-to-end
+#### 1. Complete Dialect (2-3 hours)
+- [ ] All operations defined in TableGen
+- [ ] Documentation comments
+- [ ] Verification methods
+- [ ] Assembly format
 
-### Pitfall 4: Not Understanding TableGen
-**Problem**: Fighting with TableGen errors
-**Solution**: Study existing dialect definitions, use `-debug` flags
+#### 2. All Passes Implemented (2-3 hours)
+- [ ] Fusion pass
+- [ ] Lowering to Linalg
+- [ ] Tiling pass
+- [ ] Bufferization
+- [ ] LLVM lowering
 
-### Pitfall 5: Forgetting About Types
-**Problem**: Type mismatches causing subtle bugs
-**Solution**: Strong typing discipline, use typed APIs
+#### 3. Build System (1 hour)
+- [ ] CMakeLists.txt working
+- [ ] All dependencies specified
+- [ ] Builds without warnings
+
+#### 4. Testing (2-3 hours)
+- [ ] Unit tests pass
+- [ ] Integration tests pass
+- [ ] Correctness tests pass
+- [ ] Performance benchmarks run
+
+#### 5. Documentation (2-3 hours)
+- [ ] README with build instructions
+- [ ] Example usage
+- [ ] Architecture diagram
+- [ ] Performance results
+
+#### 6. Demo (2-3 hours)
+
+Create a compelling demo:
+
+**File: `demo.sh`**
+
+```bash
+#!/bin/bash
+
+echo "========================================="
+echo "NN Compiler Demo"
+echo "========================================="
+
+echo -e "\n📝 Input: 2-layer MLP"
+cat examples/mlp.mlir
+
+echo -e "\n🔧 Compiling with optimizations..."
+./compile.sh examples/mlp.mlir mlp_optimized
+
+echo -e "\n🔧 Compiling without optimizations..."
+./compile.sh examples/mlp.mlir mlp_baseline --no-tiling
+
+echo -e "\n✅ Running correctness test..."
+./correctness_test
+
+echo -e "\n📊 Benchmarking..."
+echo "Baseline (no tiling):"
+./mlp_baseline --benchmark
+echo ""
+echo "Optimized (with tiling):"
+./mlp_optimized --benchmark
+
+echo -e "\n🎉 Demo complete!"
+```
+
+### Final Project Structure
+
+```
+nn-compiler/
+├── README.md                    # Project overview
+├── docs/
+│   └── architecture.md          # Compiler architecture
+├── include/
+│   └── NN/
+│       ├── NNDialect.h
+│       ├── NNOps.h
+│       ├── NNOps.td
+│       └── NNPasses.h
+├── lib/
+│   └── NN/
+│       ├── NNDialect.cpp
+│       ├── NNOps.cpp
+│       ├── FusionPass.cpp
+│       ├── LowerToLinalg.cpp
+│       ├── TilingPass.cpp
+│       └── Pipeline.cpp
+├── tools/
+│   └── nn-opt.cpp
+├── test/
+│   ├── fusion.mlir
+│   ├── tiling.mlir
+│   ├── lowering.mlir
+│   └── pipeline.mlir
+├── benchmark/
+│   ├── benchmark.cpp
+│   └── correctness.cpp
+├── examples/
+│   ├── mlp.mlir
+│   └── simple.mlir
+├── scripts/
+│   ├── compile.sh
+│   └── demo.sh
+└── CMakeLists.txt
+```
+
+### Deliverable
+
+✅ Complete compiler project
+✅ Comprehensive documentation
+✅ Working demo
+✅ Performance analysis
+
+**Expected Results**:
+- 2-5x speedup from tiling (depending on hardware)
+- Numerical accuracy within 1e-4
+- Clean, well-documented code
+- Understanding of end-to-end compiler flow
 
 ---
 
 ## Success Criteria
 
-By the end of this roadmap, you should be able to:
+After 4 weeks, you should be able to:
 
-✅ **Understand** the role of middle-end compilers in hardware acceleration
-✅ **Read** and comprehend MLIR code in multiple dialects
-✅ **Design** a custom dialect for domain-specific operations
-✅ **Implement** pattern-based optimizations (fusion, tiling, vectorization)
-✅ **Lower** from high-level operations to memory operations
-✅ **Compile** a simple neural network to executable code
-✅ **Measure** and analyze the performance impact of optimizations
-✅ **Test** compiler transformations for correctness and performance
+✅ **Understand MLIR fundamentals**
+- Operations, types, dialects, regions
+- SSA form and IR structure
 
----
+✅ **Build a custom dialect**
+- Define operations in TableGen
+- Implement dialect in C++
+- Create custom compiler tools
 
-## Final Project: Build a Minimal Accelerator Compiler
+✅ **Implement optimizations**
+- Pattern rewriting for fusion
+- Loop tiling for cache efficiency
+- Understand hardware constraints
 
-**Objective**: Synthesize everything into one complete project
+✅ **Build compilation pipelines**
+- High-level to low-level lowering
+- Tensor to memref conversion
+- LLVM code generation
 
-**Requirements**:
-1. Custom dialect with at least 5 neural network operations
-2. Three optimization passes (fusion, tiling, vectorization)
-3. Complete lowering pipeline to LLVM IR
-4. Test suite with unit and integration tests
-5. Performance benchmarks showing optimization impact
-6. Documentation explaining design decisions
+✅ **Validate compiler correctness**
+- Write tests with FileCheck
+- Numerical correctness validation
+- Performance benchmarking
 
-**Example Project**: "TinyNN Compiler"
-- Input: Simple neural network in custom dialect
-- Output: Optimized executable
-- Target: CPU with AVX2 instructions
-- Optimizations: Operation fusion, loop tiling, SIMD vectorization
-
-**Timeline**: 2-3 weeks
-
-**Deliverable**: GitHub repository with:
-- Source code
-- Build instructions
-- Test suite
-- Performance analysis
-- Design document
+✅ **Complete end-to-end project**
+- Working compiler for 2-layer MLP
+- Measurable performance improvements
+- Professional-quality code
 
 ---
 
-## Next Steps Beyond This Roadmap
+## What's Next?
 
-Once you complete this roadmap, you can:
+After completing this 4-week intensive, you can:
 
-1. **Add More Dialects**: GPU (NVVM, ROCDL), Custom ASICs
-2. **Advanced Optimizations**: Automatic differentiation, memory planning, distributed execution
-3. **Real Hardware**: Target actual accelerators (NVIDIA GPU, Google TPU, etc.)
-4. **Integration**: Connect to PyTorch/TensorFlow frontends
-5. **Production**: Contribute to IREE, XLA, or other production compilers
+### Extend Your Compiler
+- Add more operations (conv2d, pooling, batch_norm)
+- Implement more optimizations (operator scheduling, memory planning)
+- Target different hardware (GPU, custom accelerators)
+
+### Contribute to Real Projects
+- **IREE**: Production ML compiler
+- **torch-mlir**: PyTorch to MLIR
+- **LLVM/MLIR**: Core infrastructure
+
+### Advanced Topics
+- Auto-tuning tile sizes
+- Automatic differentiation
+- Distributed compilation
+- Hardware-specific backends (CUDA, Vulkan)
 
 ---
 
-**Remember**: Compilers are complex, but they're built from simple concepts. Master each phase before moving to the next. Build small, test often, and gradually increase complexity.
+## Resources
 
-Good luck on your MLIR compiler journey! 🚀
+### Documentation
+- [MLIR Language Reference](https://mlir.llvm.org/docs/LangRef/)
+- [MLIR Dialect Documentation](https://mlir.llvm.org/docs/Dialects/)
+- [TableGen Documentation](https://llvm.org/docs/TableGen/)
+
+### Tutorials
+- [MLIR Toy Tutorial](https://mlir.llvm.org/docs/Tutorials/Toy/)
+- [MLIR Examples](https://github.com/llvm/llvm-project/tree/main/mlir/examples)
+
+### Papers
+- [MLIR: A Compiler Infrastructure for the End of Moore's Law](https://arxiv.org/abs/2002.11054)
+
+### Community
+- [MLIR Discourse](https://discourse.llvm.org/c/mlir/31)
+- [LLVM Discord](https://discord.gg/xS7Z362)
+
+---
+
+## Tips for Success
+
+1. **Start Simple**: Get each phase working before moving to the next
+2. **Test Early**: Write tests as you build, not after
+3. **Read Examples**: Study existing dialects in MLIR
+4. **Ask Questions**: MLIR community is very helpful
+5. **Iterate**: First make it work, then make it fast
+6. **Track Progress**: Keep notes on what you learn each day
+7. **Stay Focused**: It's only 4 weeks - stay on track!
+
+**Remember**: The goal is a minimal but complete compiler. Don't get distracted by extra features. Finish the core pipeline first!
+
+Good luck! 🚀
