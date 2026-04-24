@@ -1,0 +1,6 @@
+# RUN: nn-compiler %s
+
+network mlp
+input 784
+dense 256 relu
+dense 10

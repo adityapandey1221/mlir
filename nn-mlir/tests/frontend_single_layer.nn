@@ -1,0 +1,5 @@
+# Single dense layer with no activation.
+
+network linear
+input 32
+dense 4

@@ -1,0 +1,10 @@
+# Parser should ignore comments and blank lines.
+
+network commented
+
+input 16   # feature width
+
+dense 12 relu   // first hidden layer
+dense 6 relu
+
+dense 3

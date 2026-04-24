@@ -1,0 +1,8 @@
+# Deeper feed-forward network.
+
+network deep_mlp
+input 128
+dense 64 relu
+dense 32 relu
+dense 16 relu
+dense 8
