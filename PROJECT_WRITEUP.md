@@ -366,6 +366,26 @@ I learned how lowering passes work in MLIR and how the dialect conversion framew
 
 More broadly, the project clarified the difference between a simple single-IR educational compiler and a multi-level compiler architecture.
 
+## Use of AI Assistance
+
+I used AI as a development and learning assistant during this project, but not as a substitute for understanding the compiler design. In practice, AI was most useful for:
+
+- helping me break the project into stages
+- explaining unfamiliar MLIR concepts and APIs
+- suggesting code structure for the frontend and lowering pass
+- helping draft and revise documentation
+- identifying cleanup and testing steps near the end of the project
+
+The most important design decisions still required my own understanding and review. In particular, I had to verify:
+
+- what the source language should support
+- how the frontend data should map into MLIR
+- how `nn.dense` and `nn.relu` should lower semantically
+- which simplifications were acceptable for the scope of the project
+- whether the generated code and test commands actually worked in the repository
+
+As a result, AI accelerated implementation and helped me learn the MLIR ecosystem more quickly, but the final responsibility for architecture, code review, testing, debugging, and explanation remained mine.
+
 ## Future Work
 
 There are several natural directions for extending this project:
