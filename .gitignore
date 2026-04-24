@@ -1,0 +1,6 @@
+.DS_Store
+/.claude
+
+/nn-mlir/build/
+/nn-mlir/nn-compiler
+/nn-mlir/nn-opt

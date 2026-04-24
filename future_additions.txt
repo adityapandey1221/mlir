@@ -1,2 +1,0 @@
-Optimizations
-Take PyTorch computational graph and pass it through this compiler, try running it
